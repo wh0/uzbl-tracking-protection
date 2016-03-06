@@ -111,6 +111,6 @@ string_index = write_strings()
 data = struct.pack('II', root_index, string_index) + data[8:]
 open('cooked.bin', 'wb').write(data)
 
-print worst_bucket_size
-print worst_bucket[1] is root_table
-print worst_bucket
+print 'worst bucket has %d entries' % worst_bucket_size
+if worst_bucket[1] is root_table:
+	print 'and it\'s in the root table'
