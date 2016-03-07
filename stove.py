@@ -28,7 +28,11 @@ for name, entity in entitylist.items():
 		if len(host_parts) > 5:
 			raise Exception('%s is too long' % domain)
 		if domain in root:
-			root[domain] = whitelist
+			if root[domain] is empty_whitelist:
+				root[domain] = whitelist
+			else:
+				print '%s has multiple resource lists' % domain
+				root[domain] = root[domain].union(whitelist)
 
 import struct
 
