@@ -58,7 +58,7 @@ static uint32_t suffix_lookup(const uint32_t *base, const uint8_t *string_base, 
 }
 
 static void isolate_hostname(const uint8_t **start, const uint8_t **end, uint8_t *uri) {
-	uint8_t *scheme_end = strchr(uri, ':');
+	uint8_t *scheme_end = strstr(uri, "://");
 	if (scheme_end == NULL) return;
 	uint8_t *authority_start = scheme_end + 3;
 	uint8_t *authority_end = strchr(authority_start, '/');
@@ -78,9 +78,21 @@ static void isolate_hostname(const uint8_t **start, const uint8_t **end, uint8_t
 
 static int classify_request(const uint32_t *base, const uint8_t *string_base, uint32_t root_index, const uint8_t *resource_hostname_start, const uint8_t *resource_hostname_end, const uint8_t *page_hostname_start, const uint8_t *page_hostname_end) {
 	uint32_t blacklist_index = suffix_lookup(base, string_base, root_index, resource_hostname_start, resource_hostname_end);
-	if (blacklist_index == 0) return CLASS_ALLOW;
+	if (blacklist_index == 0) {
+		fprintf(stderr, "allow\n");
+		return CLASS_ALLOW;
+	} else if (page_hostname_start == page_hostname_end) {
+		fprintf(stderr, "arbitrary\n");
+		return CLASS_ALLOW;
+	}
 	uint32_t whitelist_index = suffix_lookup(base, string_base, blacklist_index, page_hostname_start, page_hostname_end);
-	return whitelist_index == 0 ? CLASS_BLOCK : CLASS_ALLOW;
+	if (whitelist_index == 0) {
+		fprintf(stderr, "blacklist\n");
+		return CLASS_BLOCK;
+	} else {
+		fprintf(stderr, "whitelist\n");
+		return CLASS_ALLOW;
+	}
 }
 
 struct header {
@@ -93,6 +105,7 @@ int main(int argc, char **argv) {
 	char *resource_uri = argv[1];
 	char *page_uri = getenv("UZBL_URI");
 	if (page_uri == NULL) return 1;
+	fprintf(stderr, "%s <- %s = ", page_uri, resource_uri);
 
 	int fd = open("cooked.bin", O_RDONLY);
 	if (fd == -1) return perror("cooked.bin"), 1;
