@@ -8,4 +8,7 @@ cooked.bin: stove.py disconnect-blacklist.json disconnect-entitylist.json
 disconnect-%.json:
 	curl -LO https://github.com/mozilla-services/shavar-prod-lists/raw/master/$@
 
-.PHONY: all
+test: check-tracking cooked.bin
+	./test.sh
+
+.PHONY: all test
