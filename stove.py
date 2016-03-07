@@ -13,7 +13,7 @@ for name, category in blacklist['categories'].items():
 				for domain in domains:
 					host_parts = domain.split('.')
 					if len(host_parts) > 5:
-						raise Error('%s is too long' % domain)
+						raise Exception('%s is too long' % domain)
 					root[domain] = empty_whitelist
 
 entitylist = json.load(open('disconnect-entitylist.json'))
@@ -21,12 +21,12 @@ for name, entity in entitylist.items():
 	for domain in entity['properties']:
 		host_parts = domain.split('.')
 		if len(host_parts) > 5:
-			raise Error('%s is too long' % domain)
+			raise Exception('%s is too long' % domain)
 	whitelist = set(entity['properties'])
 	for domain in entity['resources']:
 		host_parts = domain.split('.')
 		if len(host_parts) > 5:
-			raise Error('%s is too long' % domain)
+			raise Exception('%s is too long' % domain)
 		if domain in root:
 			root[domain] = whitelist
 
