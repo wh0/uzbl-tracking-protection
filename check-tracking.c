@@ -20,7 +20,7 @@ struct table_entry {
 static uint32_t table_lookup(const uint32_t *base, const uint8_t *string_base, uint32_t table_index, uint32_t key_hash, const uint8_t *key) {
 	const struct table *table = (const void *) &base[table_index];
 	if (table -> num_buckets == 0) return 0;
-	unsigned int bucket = key_hash % table->num_buckets;
+	uint32_t bucket = key_hash % table->num_buckets;
 	uint32_t entry_index = table->buckets[bucket];
 	const struct table_entry *entry = (const void *) &base[entry_index];
 	while (entry->key != 0) {
