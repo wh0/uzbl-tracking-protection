@@ -69,12 +69,18 @@ def write_bucket(b):
 
 empty_bucket_index = write_bucket([])
 
+def next_power(n):
+	p = 1
+	while p < n:
+		p *= 2
+	return p
+
 worst_bucket = None
 worst_bucket_size = 0
 
 def write_table(t):
 	global data, worst_bucket, worst_bucket_size
-	num_buckets = int(len(t) / 0.75)
+	num_buckets = next_power(len(t))
 	buckets = [[] for i in range(num_buckets)]
 	for k, v in t.items():
 		k_index = get_string_index(k)
@@ -111,6 +117,8 @@ string_index = write_strings()
 data = struct.pack('II', root_index, string_index) + data[8:]
 open('cooked.bin', 'wb').write(data)
 
+reverse = {index: string for string, index in string_table.items()}
+
 print 'worst bucket has %d entries' % worst_bucket_size
-if worst_bucket[1] is root_table:
-	print 'and it\'s in the root table'
+print '%d / %d' % (len(worst_bucket[1]), worst_bucket[0])
+print [reverse[key] for key, value in worst_bucket[2]]
