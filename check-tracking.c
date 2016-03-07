@@ -25,6 +25,7 @@ static uint32_t table_lookup(const uint32_t *base, const uint8_t *string_base, u
 	const struct table_entry *entry = (const void *) &base[entry_index];
 	while (entry->key != 0) {
 		if (strcmp(key, &string_base[entry->key]) == 0) return entry->value;
+		entry++;
 	}
 	return 0;
 }
@@ -60,7 +61,7 @@ static void isolate_hostname(const uint8_t **start, const uint8_t **end, uint8_t
 	uint8_t *scheme_end = strchr(uri, ':');
 	if (scheme_end == NULL) return;
 	uint8_t *authority_start = scheme_end + 3;
-	uint8_t *authority_end = strchr(uri, '/');
+	uint8_t *authority_end = strchr(authority_start, '/');
 	if (authority_end == NULL) return;
 	*authority_end = '\0';
 	uint8_t *userinfo_end = strchr(authority_start, '@');

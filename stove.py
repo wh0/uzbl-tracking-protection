@@ -58,7 +58,7 @@ empty_string_index = get_string_index(u'')
 def reverse_hash(s):
 	h = 0
 	for c in s[::-1]:
-		h = h * 33 + ord(c)
+		h = (h * 33 + ord(c)) & 0xffffffff
 	return h
 
 def write_bucket(b):
