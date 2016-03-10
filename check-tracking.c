@@ -1,11 +1,13 @@
 #include <fcntl.h>
-#include <stdbool.h>
+#include <libgen.h>
+#include <linux/limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 struct table {
 	uint32_t num_buckets;
@@ -73,10 +75,12 @@ static void isolate_hostname(const uint8_t **start, const uint8_t **end, uint8_t
 	*end = hostname_end;
 }
 
-#define CLASS_ALLOW 0
-#define CLASS_BLOCK 1
+enum classification {
+	CLASS_ALLOW,
+	CLASS_BLOCK,
+};
 
-static int classify_request(const uint32_t *base, const uint8_t *string_base, uint32_t root_index, const uint8_t *resource_hostname_start, const uint8_t *resource_hostname_end, const uint8_t *page_hostname_start, const uint8_t *page_hostname_end) {
+static enum classification classify_request(const uint32_t *base, const uint8_t *string_base, uint32_t root_index, const uint8_t *resource_hostname_start, const uint8_t *resource_hostname_end, const uint8_t *page_hostname_start, const uint8_t *page_hostname_end) {
 	uint32_t blacklist_index = suffix_lookup(base, string_base, root_index, resource_hostname_start, resource_hostname_end);
 	if (blacklist_index == 0) {
 		fprintf(stderr, "allow\n");
@@ -107,12 +111,17 @@ int main(int argc, char **argv) {
 	if (page_uri == NULL) return 1;
 	fprintf(stderr, "%s <- %s = ", page_uri, resource_uri);
 
-	int fd = open("cooked.bin", O_RDONLY);
-	if (fd == -1) return perror("cooked.bin"), 1;
+	const char *self_link = "/proc/self/exe";
+	char self_path[PATH_MAX];
+	if (readlink(self_link, self_path, sizeof(self_path)) == -1) return perror(self_link), 1;
+	char cooked_path[PATH_MAX];
+	snprintf(cooked_path, sizeof(cooked_path), "%s/cooked.bin", dirname(self_path));
+	int fd = open(cooked_path, O_RDONLY);
+	if (fd == -1) return perror(cooked_path), 1;
 	struct stat stat;
-	if (fstat(fd, &stat) == -1) return perror("stat"), 1;
+	if (fstat(fd, &stat) == -1) return perror(cooked_path), 1;
 	const void *data = mmap(NULL, stat.st_size, PROT_READ, MAP_SHARED, fd, 0);
-	if (data == MAP_FAILED) return perror("mmap"), 1;
+	if (data == MAP_FAILED) return perror(cooked_path), 1;
 	const struct header *header = data;
 	const uint32_t *base = data;
 	const uint8_t *string_base = (const void *) &base[header->string_index];
@@ -121,7 +130,7 @@ int main(int argc, char **argv) {
 	isolate_hostname(&resource_hostname_start, &resource_hostname_end, resource_uri);
 	const uint8_t *page_hostname_start = NULL, *page_hostname_end = NULL;
 	isolate_hostname(&page_hostname_start, &page_hostname_end, page_uri);
-	int classification = classify_request(base, string_base, header->root_index, resource_hostname_start, resource_hostname_end, page_hostname_start, page_hostname_end);
+	enum classification classification = classify_request(base, string_base, header->root_index, resource_hostname_start, resource_hostname_end, page_hostname_start, page_hostname_end);
 	if (classification == CLASS_BLOCK) printf("about:blank\n");
 
 	return 0;
