@@ -23,9 +23,11 @@ Use that instead if you've got that version.
 
 ## Catalog of everything in this repo
 
-**stove.py** converts JSON blacklist and entity whitelist files into a binary file.
+**tables.h** declares some data structures to hold the blacklist and entity whitelist data.
 
-**check-tracking.c** accesses the binary file to check a given request URI, if loaded from a given page URI.
+**stove.py** converts JSON blacklist and entity whitelist files into **cooked.c**, which implements the declarations in *tables.h*.
+
+**check-tracking.c** receives a request URI and page URI from Uzbl and accesses data structures declared in *tables.h* to check whether or not to block the request, by redirecting to `about:blank`.
 
 ## What Mozilla's tracking protection does
 
@@ -47,10 +49,6 @@ Again, the request request and page URI hostnames just have to end in the domain
 Otherwise, the request is blocked.
 The effect is that each entity's knowledge of you is siloed--for example, Google can track you across its own sites, but not while you browse Facebook's sites.
 
-## Why the horrible binary format
-
-Performance.
-
 ## Remaining issues
 
 * I don't have a good way to get "what" makes the request.
@@ -59,5 +57,3 @@ If you follow a link from `https://www.reddit.com/` to `https://www.twitter.com/
 So navigation is pretty much broken.
 I've currently made it so that you can always navigate to `about:blank`, and then navigate to anywhere.
 Still sucks though.
-* The check-tracking program can't find the cooked.bin data file for itself.
-You pretty much have to run Uzbl from the directory with cooked.bin for this to work.

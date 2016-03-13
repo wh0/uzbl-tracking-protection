@@ -1,4 +1,6 @@
 import json
+import re
+import sys
 
 root = {}
 empty_whitelist = set()
@@ -14,7 +16,7 @@ for name, category in blacklist['categories'].items():
 					host_parts = domain.split('.')
 					if len(host_parts) > 5:
 						raise Exception('%s is too long' % domain)
-					root[domain] = empty_whitelist
+					root[domain] = (None, empty_whitelist)
 
 entitylist = json.load(open('disconnect-entitylist.json'))
 for name, entity in entitylist.items():
@@ -28,36 +30,21 @@ for name, entity in entitylist.items():
 		if len(host_parts) > 5:
 			raise Exception('%s is too long' % domain)
 		if domain in root:
-			if root[domain] is empty_whitelist:
-				root[domain] = whitelist
+			prev_name, prev_whitelist = root[domain]
+			if prev_whitelist is empty_whitelist:
+				root[domain] = (name, whitelist)
 			else:
-				print '%s has multiple resource lists' % domain
-				root[domain] = root[domain].union(whitelist)
+				print >> sys.stderr, '%s has multiple resource lists' % domain
+				root[domain] = ('%s and %s' % (prev_name, name), prev_whitelist.union(whitelist))
 
-import struct
+print '#include "tables.h"'
+print ''
 
-data = struct.pack('II', 0, 0)
+def to_literal(s):
+	return json.dumps(s)
 
-def current_index():
-	return len(data) / 4
-
-string_data = b''
-string_table = {}
-
-def get_string_index(s):
-	global string_data
-	if s not in string_table:
-		string_table[s] = len(string_data)
-		string_data += s.encode('utf-8') + b'\000'
-	return string_table[s]
-
-def write_strings():
-	global data
-	index = current_index()
-	data += string_data
-	return index
-
-empty_string_index = get_string_index(u'')
+def to_slug(s):
+	return re.sub(r'[^A-Za-z0-9]+', '_', s)
 
 def reverse_hash(s):
 	h = 0
@@ -65,64 +52,67 @@ def reverse_hash(s):
 		h = (h * 33 + ord(c)) & 0xffffffff
 	return h
 
-def write_bucket(b):
-	global data
-	index = current_index()
-	data += b''.join(struct.pack('II', k, v) for k, v in b) + struct.pack('II', 0, 0)
-	return index
+def write_bucket(b, name, linkage='static '):
+	print '%sconst struct table_entry %s[] = {' % (linkage, name)
+	for kv in b:
+		print '\t{%s, %s},' % kv
+	print '\t{},'
+	print '};'
+	print ''
+	return name
 
-empty_bucket_index = write_bucket([])
+empty_bucket_name = write_bucket([], 'empty_bucket', '')
 
 def next_power(n):
+	if n == 0:
+		return 0
 	p = 1
 	while p < n:
 		p *= 2
 	return p
 
-worst_bucket = None
-worst_bucket_size = 0
+worst_bucket = (0, None, None)
 
-def write_table(t):
-	global data, worst_bucket, worst_bucket_size
+def write_table(t, name, linkage='static '):
+	global worst_bucket
 	num_buckets = next_power(len(t))
 	buckets = [[] for i in range(num_buckets)]
 	for k, v in t.items():
-		k_index = get_string_index(k)
+		k_literal = to_literal(k)
 		k_hash = reverse_hash(k)
-		buckets[k_hash % num_buckets].append((k_index, v))
-	bucket_indices = []
-	for b in buckets:
+		buckets[k_hash % num_buckets].append((k_literal, v))
+	bucket_names = []
+	for bi, b in enumerate(buckets):
 		if len(b) == 0:
-			bucket_indices.append(empty_bucket_index)
+			bucket_names.append(empty_bucket_name)
 		else:
 			b_size = len(b)
-			if b_size > worst_bucket_size:
-				worst_bucket = (num_buckets, t, b)
-				worst_bucket_size = b_size
-			bucket_indices.append(write_bucket(b))
-	index = current_index()
-	data += struct.pack('I', num_buckets) + b''.join(struct.pack('I', bucket_index) for bucket_index in bucket_indices)
-	return index
+			if b_size > worst_bucket[0]:
+				worst_bucket = (b_size, bi, num_buckets, name, t, b)
+			bucket_names.append(write_bucket(b, '%s_bucket_%d' % (name, bi)))
+	print '%sconst struct table %s = {%d, {' % (linkage, name, num_buckets)
+	for bn in bucket_names:
+		print '\t%s,' % bn
+	print '}};'
+	print ''
+	return name
 
-empty_table_index = write_table({})
+empty_table_name = write_table({}, 'empty_table', '')
 
+whitelist_names = {id(empty_whitelist): empty_table_name}
 root_table = {}
-for resource_domain in root:
-	if root[resource_domain] is empty_whitelist:
-		root_table[resource_domain] = empty_table_index
-	else:
+for resource_domain, (name, whitelist) in root.items():
+	whitelist_id = id(whitelist)
+	if whitelist_id not in whitelist_names:
 		whitelist_table = {}
-		for property_domain in root[resource_domain]:
-			property_domain_index = get_string_index(property_domain)
-			whitelist_table[property_domain] = property_domain_index
-		root_table[resource_domain] = write_table(whitelist_table)
-root_index = write_table(root_table)
-string_index = write_strings()
-data = struct.pack('II', root_index, string_index) + data[8:]
-open('cooked.bin', 'wb').write(data)
+		for property_domain in whitelist:
+			property_domain_literal = to_literal(property_domain)
+			whitelist_table[property_domain] = property_domain_literal
+		print '// %s' % name
+		whitelist_names[whitelist_id] = write_table(whitelist_table, 'properties_%s' % to_slug(name))
+	root_table[resource_domain] = '&%s' % whitelist_names[whitelist_id]
+root_name = write_table(root_table, 'root', '')
 
-reverse = {index: string for string, index in string_table.items()}
-
-print 'worst bucket has %d entries' % worst_bucket_size
-print '%d / %d' % (len(worst_bucket[1]), worst_bucket[0])
-print [reverse[key] for key, value in worst_bucket[2]]
+print >> sys.stderr, 'worst bucket has %d entries' % worst_bucket[0]
+print >> sys.stderr, '%d/%d in %s' % (worst_bucket[1], worst_bucket[2], worst_bucket[3])
+print >> sys.stderr, [k for k, v in worst_bucket[5]]

@@ -1,3 +1,5 @@
-/check-tracking
-/cooked.bin
 /disconnect-*.json
+/cooked.c
+/cooked.o
+/check-tracking.o
+/check-tracking

@@ -1,78 +1,68 @@
-#include <fcntl.h>
-#include <libgen.h>
-#include <linux/limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
-struct table {
-	uint32_t num_buckets;
-	uint32_t buckets[];
-};
+#include "tables.h"
 
-struct table_entry {
-	uint32_t key;
-	uint32_t value;
-};
-
-static uint32_t table_lookup(const uint32_t *base, const uint8_t *string_base, uint32_t table_index, uint32_t key_hash, const uint8_t *key) {
-	const struct table *table = (const void *) &base[table_index];
-	if (table -> num_buckets == 0) return 0;
-	uint32_t bucket = key_hash % table->num_buckets;
-	uint32_t entry_index = table->buckets[bucket];
-	const struct table_entry *entry = (const void *) &base[entry_index];
-	while (entry->key != 0) {
-		if (strcmp(key, &string_base[entry->key]) == 0) return entry->value;
+static const void *table_lookup(const struct table *table, uint32_t key_hash, const char *key) {
+	if (table->num_buckets == 0) return 0;
+	size_t bucket = key_hash % table->num_buckets;
+	const struct table_entry *entry = table->buckets[bucket];
+	while (entry->key != NULL) {
+		if (strcmp(key, entry->key) == 0) return entry->value;
 		entry++;
 	}
-	return 0;
+	return NULL;
 }
+
+struct start_end {
+	const char *start;
+	const char *end;
+};
 
 #define MAX_PARTS 5
 
 struct suffix {
 	uint32_t hash;
-	const uint8_t *pos;
+	const char *pos;
 };
 
-static size_t reverse_hash_parts(struct suffix *out, const uint8_t *start, const uint8_t *end) {
+static size_t reverse_hash_parts(struct suffix *out, struct start_end hostname) {
 	size_t count = 0;
 	uint32_t hash = 0;
-	while (count != MAX_PARTS && end-- != start) {
-		hash = 33 * hash + *end;
-		if (end == start || *(end - 1) == '.') out[count++] = (struct suffix) {hash, end};
+	const char *pos = hostname.end;
+	while (count != MAX_PARTS && pos-- != hostname.start) {
+		hash = 33 * hash + *pos;
+		if (pos == hostname.start || *(pos - 1) == '.') out[count++] = (struct suffix) {hash, pos};
 	}
 	return count;
 }
 
-static uint32_t suffix_lookup(const uint32_t *base, const uint8_t *string_base, uint32_t table_index, const uint8_t *start, const uint8_t *end) {
+static const void *suffix_lookup(const struct table *table, struct start_end hostname) {
 	struct suffix suffixes[MAX_PARTS];
-	size_t count = reverse_hash_parts(suffixes, start, end);
-	while (count-- > 0) {
-		uint32_t value = table_lookup(base, string_base, table_index, suffixes[count].hash, suffixes[count].pos);
-		if (value != 0) return value;
+	size_t count = reverse_hash_parts(suffixes, hostname);
+	while (count-- != 0) {
+		const void *value = table_lookup(table, suffixes[count].hash, suffixes[count].pos);
+		if (value != NULL) return value;
 	}
 	return 0;
 }
 
-static void isolate_hostname(const uint8_t **start, const uint8_t **end, uint8_t *uri) {
-	uint8_t *scheme_end = strstr(uri, "://");
+static void isolate_hostname(struct start_end *hostname, char *uri) {
+	char *scheme_end = strstr(uri, "://");
 	if (scheme_end == NULL) return;
-	uint8_t *authority_start = scheme_end + 3;
-	uint8_t *authority_end = strchr(authority_start, '/');
+	char *authority_start = scheme_end + 3;
+	char *authority_end = strchr(authority_start, '/');
 	if (authority_end == NULL) return;
 	*authority_end = '\0';
-	uint8_t *userinfo_end = strchr(authority_start, '@');
-	uint8_t *hostname_start = userinfo_end == NULL ? authority_start : userinfo_end + 1;
-	uint8_t *hostname_end = strchr(hostname_start, ':');
+	char *userinfo_end = strchr(authority_start, '@');
+	char *hostname_start = userinfo_end == NULL ? authority_start : userinfo_end + 1;
+	char *hostname_end = strchr(hostname_start, ':');
 	hostname_end = hostname_end == NULL ? authority_end : hostname_end;
 	*hostname_end = '\0';
-	*start = hostname_start;
-	*end = hostname_end;
+	hostname->start = hostname_start;
+	hostname->end = hostname_end;
 }
 
 enum classification {
@@ -80,17 +70,18 @@ enum classification {
 	CLASS_BLOCK,
 };
 
-static enum classification classify_request(const uint32_t *base, const uint8_t *string_base, uint32_t root_index, const uint8_t *resource_hostname_start, const uint8_t *resource_hostname_end, const uint8_t *page_hostname_start, const uint8_t *page_hostname_end) {
-	uint32_t blacklist_index = suffix_lookup(base, string_base, root_index, resource_hostname_start, resource_hostname_end);
-	if (blacklist_index == 0) {
-		fprintf(stderr, "allow\n");
-		return CLASS_ALLOW;
-	} else if (page_hostname_start == page_hostname_end) {
+static enum classification classify_request(const struct table *root, struct start_end resource, struct start_end page) {
+	if (page.start == page.end) {
 		fprintf(stderr, "arbitrary\n");
 		return CLASS_ALLOW;
 	}
-	uint32_t whitelist_index = suffix_lookup(base, string_base, blacklist_index, page_hostname_start, page_hostname_end);
-	if (whitelist_index == 0) {
+	const void *blacklist_value = suffix_lookup(root, resource);
+	if (blacklist_value == NULL) {
+		fprintf(stderr, "allow\n");
+		return CLASS_ALLOW;
+	}
+	const void *whitelist_value = suffix_lookup(blacklist_value, page);
+	if (whitelist_value == NULL) {
 		fprintf(stderr, "blacklist\n");
 		return CLASS_BLOCK;
 	} else {
@@ -99,11 +90,6 @@ static enum classification classify_request(const uint32_t *base, const uint8_t 
 	}
 }
 
-struct header {
-	uint32_t root_index;
-	uint32_t string_index;
-};
-
 int main(int argc, char **argv) {
 	if (argc < 2) return 1;
 	char *resource_uri = argv[1];
@@ -111,26 +97,11 @@ int main(int argc, char **argv) {
 	if (page_uri == NULL) return 1;
 	fprintf(stderr, "%s <- %s = ", page_uri, resource_uri);
 
-	const char *self_link = "/proc/self/exe";
-	char self_path[PATH_MAX];
-	if (readlink(self_link, self_path, sizeof(self_path)) == -1) return perror(self_link), 1;
-	char cooked_path[PATH_MAX];
-	snprintf(cooked_path, sizeof(cooked_path), "%s/cooked.bin", dirname(self_path));
-	int fd = open(cooked_path, O_RDONLY);
-	if (fd == -1) return perror(cooked_path), 1;
-	struct stat stat;
-	if (fstat(fd, &stat) == -1) return perror(cooked_path), 1;
-	const void *data = mmap(NULL, stat.st_size, PROT_READ, MAP_SHARED, fd, 0);
-	if (data == MAP_FAILED) return perror(cooked_path), 1;
-	const struct header *header = data;
-	const uint32_t *base = data;
-	const uint8_t *string_base = (const void *) &base[header->string_index];
-
-	const uint8_t *resource_hostname_start = NULL, *resource_hostname_end = NULL;
-	isolate_hostname(&resource_hostname_start, &resource_hostname_end, resource_uri);
-	const uint8_t *page_hostname_start = NULL, *page_hostname_end = NULL;
-	isolate_hostname(&page_hostname_start, &page_hostname_end, page_uri);
-	enum classification classification = classify_request(base, string_base, header->root_index, resource_hostname_start, resource_hostname_end, page_hostname_start, page_hostname_end);
+	struct start_end resource = {};
+	isolate_hostname(&resource, resource_uri);
+	struct start_end page = {};
+	isolate_hostname(&page, page_uri);
+	enum classification classification = classify_request(&root, resource, page);
 	if (classification == CLASS_BLOCK) printf("about:blank\n");
 
 	return 0;
